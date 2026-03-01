@@ -1,3 +1,10 @@
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  role: ViewType;
+}
+
 export interface Product {
   id: number;
   category_id: number;

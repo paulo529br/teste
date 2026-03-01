@@ -4,7 +4,7 @@ import {
   Utensils, 
   ChefHat, 
   Bike, 
-  User, 
+  User as UserIcon, 
   Plus, 
   ShoppingCart, 
   Clock, 
@@ -18,18 +18,34 @@ import {
   Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, Order, Courier, ViewType, OrderItem } from './types';
+import { Product, Order, Courier, ViewType, OrderItem, User } from './types';
+
+// --- Auth Helper ---
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('token');
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': token ? `Bearer ${token}` : ''
+  };
+};
 
 // --- Components ---
 
-const Navbar = ({ currentView, setView }: { currentView: ViewType, setView: (v: ViewType) => void }) => {
-  const views: { id: ViewType; label: string; icon: any }[] = [
-    { id: 'admin', label: 'Admin', icon: LayoutDashboard },
-    { id: 'cashier', label: 'Caixa', icon: Utensils },
-    { id: 'kitchen', label: 'Cozinha', icon: ChefHat },
-    { id: 'delivery', label: 'Delivery', icon: Bike },
-    { id: 'client', label: 'Cliente', icon: User },
+const Navbar = ({ currentView, setView, user, onLogout }: { 
+  currentView: ViewType, 
+  setView: (v: ViewType) => void,
+  user: User | null,
+  onLogout: () => void
+}) => {
+  const allViews: { id: ViewType; label: string; icon: any; roles: string[] }[] = [
+    { id: 'admin', label: 'Admin', icon: LayoutDashboard, roles: ['admin'] },
+    { id: 'cashier', label: 'Caixa', icon: Utensils, roles: ['admin', 'cashier'] },
+    { id: 'kitchen', label: 'Cozinha', icon: ChefHat, roles: ['admin', 'kitchen'] },
+    { id: 'delivery', label: 'Delivery', icon: Bike, roles: ['admin', 'delivery'] },
+    { id: 'client', label: 'Cliente', icon: UserIcon, roles: ['admin', 'client'] },
   ];
+
+  const allowedViews = allViews.filter(v => user && v.roles.includes(user.role));
 
   return (
     <nav className="bg-zinc-900 text-white p-4 flex justify-between items-center sticky top-0 z-50 shadow-lg">
@@ -39,23 +55,184 @@ const Navbar = ({ currentView, setView }: { currentView: ViewType, setView: (v: 
         </div>
         <span className="font-bold text-xl tracking-tight">PIZZARIA MASTER</span>
       </div>
-      <div className="flex gap-1 bg-zinc-800 p-1 rounded-xl">
-        {views.map((v) => (
-          <button
-            key={v.id}
-            onClick={() => setView(v.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-              currentView === v.id 
-                ? 'bg-red-600 text-white shadow-md' 
-                : 'text-zinc-400 hover:bg-zinc-700 hover:text-white'
-            }`}
-          >
-            <v.icon className="w-4 h-4" />
-            <span className="hidden md:inline text-sm font-medium">{v.label}</span>
-          </button>
-        ))}
+      <div className="flex items-center gap-4">
+        <div className="flex gap-1 bg-zinc-800 p-1 rounded-xl">
+          {allowedViews.map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                currentView === v.id 
+                  ? 'bg-red-600 text-white shadow-md' 
+                  : 'text-zinc-400 hover:bg-zinc-700 hover:text-white'
+              }`}
+            >
+              <v.icon className="w-4 h-4" />
+              <span className="hidden md:inline text-sm font-medium">{v.label}</span>
+            </button>
+          ))}
+        </div>
+        <button 
+          onClick={onLogout}
+          className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-all"
+          title="Sair"
+        >
+          <LogOut className="w-5 h-5" />
+        </button>
       </div>
     </nav>
+  );
+};
+
+const LoginView = ({ onLogin, onSwitchToRegister }: { onLogin: (user: User, token: string) => void, onSwitchToRegister: () => void }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      onLogin(data.user, data.token);
+    } else {
+      setError(data.error);
+    }
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-72px)] flex items-center justify-center p-6 bg-zinc-50">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white p-8 rounded-3xl shadow-xl shadow-zinc-200/50 w-full max-w-md"
+      >
+        <div className="text-center mb-8">
+          <div className="bg-red-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-red-200">
+            <Utensils className="text-white w-8 h-8" />
+          </div>
+          <h2 className="text-3xl font-black tracking-tight">Bem-vindo de volta</h2>
+          <p className="text-zinc-500 mt-2">Acesse sua conta para continuar</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-zinc-400 tracking-widest">Email</label>
+            <input 
+              type="email" 
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:ring-2 focus:ring-red-500 outline-none transition-all"
+              placeholder="seu@email.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-zinc-400 tracking-widest">Senha</label>
+            <input 
+              type="password" 
+              required
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:ring-2 focus:ring-red-500 outline-none transition-all"
+              placeholder="••••••••"
+            />
+          </div>
+          {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
+          <button className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold text-lg hover:bg-black transition-all shadow-lg shadow-zinc-200">
+            Entrar
+          </button>
+        </form>
+        <p className="text-center mt-6 text-sm text-zinc-500">
+          Não tem uma conta? <button onClick={onSwitchToRegister} className="text-red-600 font-bold hover:underline">Cadastre-se</button>
+        </p>
+      </motion.div>
+    </div>
+  );
+};
+
+const RegisterView = ({ onRegister, onSwitchToLogin }: { onRegister: (user: User, token: string) => void, onSwitchToLogin: () => void }) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      onRegister(data.user, data.token);
+    } else {
+      setError(data.error);
+    }
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-72px)] flex items-center justify-center p-6 bg-zinc-50">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white p-8 rounded-3xl shadow-xl shadow-zinc-200/50 w-full max-w-md"
+      >
+        <div className="text-center mb-8">
+          <div className="bg-red-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-red-200">
+            <UserIcon className="text-white w-8 h-8" />
+          </div>
+          <h2 className="text-3xl font-black tracking-tight">Criar Conta</h2>
+          <p className="text-zinc-500 mt-2">Junte-se à nossa pizzaria</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-zinc-400 tracking-widest">Nome Completo</label>
+            <input 
+              type="text" 
+              required
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:ring-2 focus:ring-red-500 outline-none transition-all"
+              placeholder="Seu Nome"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-zinc-400 tracking-widest">Email</label>
+            <input 
+              type="email" 
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:ring-2 focus:ring-red-500 outline-none transition-all"
+              placeholder="seu@email.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase text-zinc-400 tracking-widest">Senha</label>
+            <input 
+              type="password" 
+              required
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:ring-2 focus:ring-red-500 outline-none transition-all"
+              placeholder="••••••••"
+            />
+          </div>
+          {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
+          <button className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-bold text-lg hover:bg-black transition-all shadow-lg shadow-zinc-200">
+            Cadastrar
+          </button>
+        </form>
+        <p className="text-center mt-6 text-sm text-zinc-500">
+          Já tem uma conta? <button onClick={onSwitchToLogin} className="text-red-600 font-bold hover:underline">Entrar</button>
+        </p>
+      </motion.div>
+    </div>
   );
 };
 
@@ -66,8 +243,8 @@ const AdminView = () => {
   const [orders, setOrders] = useState<Order[]>([]);
 
   useEffect(() => {
-    fetch('/api/products').then(res => res.json()).then(setProducts);
-    fetch('/api/orders').then(res => res.json()).then(setOrders);
+    fetch('/api/products', { headers: getAuthHeaders() }).then(res => res.json()).then(setProducts);
+    fetch('/api/orders', { headers: getAuthHeaders() }).then(res => res.json()).then(setOrders);
   }, []);
 
   const totalRevenue = orders.reduce((acc, o) => acc + (o.status === 'completed' ? o.total_price : 0), 0);
@@ -132,7 +309,7 @@ const CashierView = () => {
   const [tableNumber, setTableNumber] = useState('');
 
   useEffect(() => {
-    fetch('/api/products').then(res => res.json()).then(setProducts);
+    fetch('/api/products', { headers: getAuthHeaders() }).then(res => res.json()).then(setProducts);
   }, []);
 
   const addToCart = (p: Product) => {
@@ -155,7 +332,7 @@ const CashierView = () => {
     if (cart.length === 0) return;
     const res = await fetch('/api/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         type: orderType,
         table_number: tableNumber ? parseInt(tableNumber) : null,
@@ -264,9 +441,11 @@ const KitchenView = () => {
   const [audio] = useState(new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
 
   const fetchOrders = useCallback(() => {
-    fetch('/api/orders').then(res => res.json()).then(data => {
-      const activeOrders = data.filter((o: Order) => ['received', 'preparing'].includes(o.status));
-      setOrders(activeOrders);
+    fetch('/api/orders', { headers: getAuthHeaders() }).then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        const activeOrders = data.filter((o: Order) => ['received', 'preparing'].includes(o.status));
+        setOrders(activeOrders);
+      }
     });
   }, []);
 
@@ -286,7 +465,7 @@ const KitchenView = () => {
   const updateStatus = async (id: number, status: string) => {
     await fetch(`/api/orders/${id}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ status })
     });
     fetchOrders();
@@ -355,7 +534,7 @@ const KitchenView = () => {
 const KitchenItems = ({ orderId }: { orderId: number }) => {
   const [items, setItems] = useState<OrderItem[]>([]);
   useEffect(() => {
-    fetch(`/api/orders/${orderId}`).then(res => res.json()).then(data => setItems(data.items));
+    fetch(`/api/orders/${orderId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setItems(data.items || []));
   }, [orderId]);
 
   return (
@@ -378,11 +557,13 @@ const DeliveryView = () => {
   const [couriers, setCouriers] = useState<Courier[]>([]);
 
   const fetchData = useCallback(() => {
-    fetch('/api/orders').then(res => res.json()).then(data => {
-      const deliveryOrders = data.filter((o: Order) => o.type === 'delivery' && ['ready', 'delivering'].includes(o.status));
-      setOrders(deliveryOrders);
+    fetch('/api/orders', { headers: getAuthHeaders() }).then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        const deliveryOrders = data.filter((o: Order) => o.type === 'delivery' && ['ready', 'delivering'].includes(o.status));
+        setOrders(deliveryOrders);
+      }
     });
-    fetch('/api/couriers').then(res => res.json()).then(setCouriers);
+    fetch('/api/couriers', { headers: getAuthHeaders() }).then(res => res.json()).then(setCouriers);
   }, []);
 
   useEffect(() => {
@@ -395,7 +576,7 @@ const DeliveryView = () => {
   const assignCourier = async (orderId: number, courierId: number) => {
     await fetch(`/api/orders/${orderId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ status: 'delivering', courier_id: courierId })
     });
     fetchData();
@@ -404,7 +585,7 @@ const DeliveryView = () => {
   const completeDelivery = async (orderId: number) => {
     await fetch(`/api/orders/${orderId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ status: 'completed' })
     });
     fetchData();
@@ -480,7 +661,7 @@ const ClientView = () => {
   const [isOrdering, setIsOrdering] = useState(false);
 
   useEffect(() => {
-    fetch('/api/products').then(res => res.json()).then(setProducts);
+    fetch('/api/products', { headers: getAuthHeaders() }).then(res => res.json()).then(setProducts);
   }, []);
 
   const addToCart = (p: Product) => {
@@ -500,7 +681,7 @@ const ClientView = () => {
     setIsOrdering(true);
     const res = await fetch('/api/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         type: 'delivery',
         items: cart,
@@ -630,10 +811,58 @@ const ClientView = () => {
 
 export default function App() {
   const [view, setView] = useState<ViewType>('client');
+  const [user, setUser] = useState<User | null>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      fetch('/api/auth/me', { headers: getAuthHeaders() })
+        .then(res => res.json())
+        .then(data => {
+          if (data.id) {
+            setUser(data);
+            setView(data.role === 'client' ? 'client' : data.role);
+          } else {
+            localStorage.removeItem('token');
+          }
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleLogin = (user: User, token: string) => {
+    localStorage.setItem('token', token);
+    setUser(user);
+    setView(user.role === 'client' ? 'client' : user.role);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setUser(null);
+    setView('client');
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-900">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-red-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return isRegistering 
+      ? <RegisterView onRegister={handleLogin} onSwitchToLogin={() => setIsRegistering(false)} />
+      : <LoginView onLogin={handleLogin} onSwitchToRegister={() => setIsRegistering(true)} />;
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900">
-      <Navbar currentView={view} setView={setView} />
+      <Navbar currentView={view} setView={setView} user={user} onLogout={handleLogout} />
       <main>
         <AnimatePresence mode="wait">
           <motion.div
@@ -643,19 +872,14 @@ export default function App() {
             exit={{ opacity: 0, x: -10 }}
             transition={{ duration: 0.2 }}
           >
-            {view === 'admin' && <AdminView />}
-            {view === 'cashier' && <CashierView />}
-            {view === 'kitchen' && <KitchenView />}
-            {view === 'delivery' && <DeliveryView />}
+            {view === 'admin' && user.role === 'admin' && <AdminView />}
+            {view === 'cashier' && (user.role === 'admin' || user.role === 'cashier') && <CashierView />}
+            {view === 'kitchen' && (user.role === 'admin' || user.role === 'kitchen') && <KitchenView />}
+            {view === 'delivery' && (user.role === 'admin' || user.role === 'delivery') && <DeliveryView />}
             {view === 'client' && <ClientView />}
           </motion.div>
         </AnimatePresence>
       </main>
-      
-      {/* Real-time Notification Toast (Conceptual) */}
-      <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
-        {/* We could add a toast system here for status updates */}
-      </div>
     </div>
   );
 }

@@ -4,18 +4,21 @@ import { WebSocketServer, WebSocket } from "ws";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const db = new Database("pizzaria.db");
+const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-pizzaria";
 
 // Initialize Database Schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
-    role TEXT, -- 'admin', 'cashier', 'kitchen', 'delivery', 'client'
+    role TEXT DEFAULT 'client', -- 'admin', 'cashier', 'kitchen', 'delivery', 'client'
     email TEXT UNIQUE,
     password TEXT
   );
@@ -58,7 +61,8 @@ db.exec(`
     address TEXT,
     payment_method TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (courier_id) REFERENCES couriers(id)
+    FOREIGN KEY (courier_id) REFERENCES couriers(id),
+    FOREIGN KEY (client_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS order_items (
@@ -76,7 +80,14 @@ db.exec(`
 // Seed initial data if empty
 const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
 if (userCount.count === 0) {
-  db.prepare("INSERT INTO users (name, role, email, password) VALUES (?, ?, ?, ?)").run("Admin", "admin", "admin@pizzaria.com", "admin123");
+  const adminPassword = bcrypt.hashSync("admin123", 10);
+  db.prepare("INSERT INTO users (name, role, email, password) VALUES (?, ?, ?, ?)").run("Admin", "admin", "admin@pizzaria.com", adminPassword);
+  
+  // Staff accounts
+  db.prepare("INSERT INTO users (name, role, email, password) VALUES (?, ?, ?, ?)").run("Caixa", "cashier", "caixa@pizzaria.com", adminPassword);
+  db.prepare("INSERT INTO users (name, role, email, password) VALUES (?, ?, ?, ?)").run("Cozinha", "kitchen", "cozinha@pizzaria.com", adminPassword);
+  db.prepare("INSERT INTO users (name, role, email, password) VALUES (?, ?, ?, ?)").run("Entregador", "delivery", "entrega@pizzaria.com", adminPassword);
+
   db.prepare("INSERT INTO categories (name) VALUES (?)").run("Pizzas");
   db.prepare("INSERT INTO categories (name) VALUES (?)").run("Bebidas");
   db.prepare("INSERT INTO categories (name) VALUES (?)").run("Bordas");
@@ -89,10 +100,64 @@ if (userCount.count === 0) {
   db.prepare("INSERT INTO couriers (name) VALUES (?)").run("Maria Santos");
 }
 
+// Middleware
+const authenticateToken = (req: any, res: any, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: "Token não fornecido" });
+
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ error: "Token inválido" });
+    req.user = user;
+    next();
+  });
+};
+
+const authorizeRoles = (...roles: string[]) => {
+  return (req: any, res: any, next: any) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Acesso negado" });
+    }
+    next();
+  };
+};
+
 async function startServer() {
   const app = express();
   app.use(express.json());
   const PORT = 3000;
+
+  // Auth Routes
+  app.post("/api/auth/register", (req, res) => {
+    const { name, email, password } = req.body;
+    try {
+      const hashedPassword = bcrypt.hashSync(password, 10);
+      const info = db.prepare("INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'client')").run(name, email, hashedPassword);
+      const user = { id: info.lastInsertRowid, name, email, role: 'client' };
+      const token = jwt.sign(user, JWT_SECRET);
+      res.json({ user, token });
+    } catch (e) {
+      res.status(400).json({ error: "Email já cadastrado" });
+    }
+  });
+
+  app.post("/api/auth/login", (req, res) => {
+    const { email, password } = req.body;
+    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+    
+    if (user && bcrypt.compareSync(password, user.password)) {
+      const { password: _, ...userWithoutPassword } = user;
+      const token = jwt.sign(userWithoutPassword, JWT_SECRET);
+      res.json({ user: userWithoutPassword, token });
+    } else {
+      res.status(401).json({ error: "Credenciais inválidas" });
+    }
+  });
+
+  app.get("/api/auth/me", authenticateToken, (req: any, res) => {
+    res.json(req.user);
+  });
 
   // API Routes
   app.get("/api/products", (req, res) => {
@@ -104,13 +169,14 @@ async function startServer() {
     res.json(products);
   });
 
-  app.post("/api/orders", (req, res) => {
+  app.post("/api/orders", authenticateToken, (req: any, res) => {
     const { type, table_number, items, total_price, address, payment_method } = req.body;
-    
+    const clientId = req.user.role === 'client' ? req.user.id : null;
+
     const info = db.prepare(`
-      INSERT INTO orders (type, table_number, total_price, address, payment_method)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(type, table_number, total_price, address, payment_method);
+      INSERT INTO orders (client_id, type, table_number, total_price, address, payment_method)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(clientId, type, table_number, total_price, address, payment_method);
     
     const orderId = info.lastInsertRowid;
     
@@ -127,18 +193,36 @@ async function startServer() {
     res.json({ success: true, orderId });
   });
 
-  app.get("/api/orders", (req, res) => {
+  app.get("/api/orders", authenticateToken, authorizeRoles('admin', 'cashier', 'kitchen', 'delivery'), (req, res) => {
     const orders = db.prepare(`
-      SELECT o.*, c.name as courier_name 
+      SELECT o.*, c.name as courier_name, u.name as client_name
       FROM orders o
       LEFT JOIN couriers c ON o.courier_id = c.id
+      LEFT JOIN users u ON o.client_id = u.id
       ORDER BY created_at DESC
     `).all();
     res.json(orders);
   });
 
-  app.get("/api/orders/:id", (req, res) => {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+  app.get("/api/my-orders", authenticateToken, (req: any, res) => {
+    const orders = db.prepare(`
+      SELECT o.*, c.name as courier_name 
+      FROM orders o
+      LEFT JOIN couriers c ON o.courier_id = c.id
+      WHERE o.client_id = ?
+      ORDER BY created_at DESC
+    `).all(req.user.id);
+    res.json(orders);
+  });
+
+  app.get("/api/orders/:id", authenticateToken, (req: any, res) => {
+    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id) as any;
+    
+    // Security: Only staff or the client who placed the order can see details
+    if (req.user.role === 'client' && order.client_id !== req.user.id) {
+      return res.status(403).json({ error: "Acesso negado" });
+    }
+
     const items = db.prepare(`
       SELECT oi.*, p.name as product_name 
       FROM order_items oi
@@ -148,7 +232,7 @@ async function startServer() {
     res.json({ ...order, items });
   });
 
-  app.patch("/api/orders/:id/status", (req, res) => {
+  app.patch("/api/orders/:id/status", authenticateToken, authorizeRoles('admin', 'cashier', 'kitchen', 'delivery'), (req, res) => {
     const { status, courier_id } = req.body;
     if (courier_id) {
       db.prepare("UPDATE orders SET status = ?, courier_id = ? WHERE id = ?").run(status, courier_id, req.params.id);
@@ -159,7 +243,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.get("/api/couriers", (req, res) => {
+  app.get("/api/couriers", authenticateToken, authorizeRoles('admin', 'delivery'), (req, res) => {
     const couriers = db.prepare("SELECT * FROM couriers").all();
     res.json(couriers);
   });
