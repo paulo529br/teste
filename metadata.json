@@ -1,0 +1,5 @@
+{
+  "name": "Pizzaria Master POS",
+  "description": "Sistema completo de PDV para pizzarias com módulos de Admin, Caixa, Cozinha, Delivery e Cliente em tempo real.",
+  "requestFramePermissions": []
+}
